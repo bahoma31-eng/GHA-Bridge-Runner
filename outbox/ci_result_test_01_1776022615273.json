@@ -1,0 +1,38 @@
+{
+  "task_id": "test_01",
+  "description": "اختبار أولي",
+  "status": "SUCCESS",
+  "cycles_run": 2,
+  "cycles_max": 5,
+  "cycle_results": [
+    {
+      "cycle": 1,
+      "model_slot": "gpt-4o-mini",
+      "status": "SUCCESS",
+      "return_code": 0,
+      "elapsed_s": 0.01,
+      "output": "2"
+    },
+    {
+      "cycle": 2,
+      "model_slot": "claude-haiku-3-5",
+      "status": "SUCCESS",
+      "return_code": 0,
+      "elapsed_s": 0.01,
+      "output": "3.12.13 (main, Mar  4 2026, 02:26:36) [GCC 13.3.0]"
+    }
+  ],
+  "model_rotation": [
+    "gpt-4o-mini",
+    "claude-haiku-3-5",
+    "gpt-4o-mini",
+    "claude-haiku-3-5",
+    "gpt-4o-mini"
+  ],
+  "timestamp": "2026-04-12T19:36:55Z",
+  "executed_on": "github_actions_runner",
+  "runner_os": "Linux",
+  "workflow_run": "24314728350",
+  "repo": "bahoma31-eng/GHA-Bridge-Runner",
+  "bridge_version": "3.1-ci"
+}
