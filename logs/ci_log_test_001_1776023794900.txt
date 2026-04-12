@@ -1,0 +1,68 @@
+
+======================================================================
+  GHA Code Interpreter Loop Runner V3.1
+----------------------------------------------------------------------
+[19:56:34]        i  Repo     : bahoma31-eng/GHA-Bridge-Runner [main]
+[19:56:34]        i  Task     : inbox/ci_task.json
+[19:56:34]        i  Max Cycles: 5
+[19:56:34]        i  Timeout  : 120s per cycle
+[19:56:34]        i  Models   : gpt-4o-mini → claude-haiku-3-5 → gpt-4o-mini → claude-haiku-3-5 → gpt-4o-mini
+
+======================================================================
+  Reading task from inbox
+----------------------------------------------------------------------
+[19:56:34]        i  Task ID  : test_001
+[19:56:34]        i  Desc     : اختبار أول للوكيل على GitHub Actions
+[19:56:34]        i  Steps    : 4 (max cycles = 5)
+
+======================================================================
+  Execution Loop
+----------------------------------------------------------------------
+
+======================================================================
+  Cycle 1/4  |  Model slot: gpt-4o-mini
+----------------------------------------------------------------------
+[19:56:34] [CYC1] >>  Executing step 1...
+[19:56:34] [CYC1] 🤖  LLM model slot: gpt-4o-mini
+[19:56:34] [CYC1] 💻  Code preview: import sys; print('Python:', sys.version)
+[19:56:34] [CYC1] <<  Done in 0.01s — SUCCESS (rc=0)
+[19:56:34] [CYC1]     Python: 3.12.13 (main, Mar  4 2026, 02:26:36) [GCC 13.3.0]
+
+======================================================================
+  Cycle 2/4  |  Model slot: claude-haiku-3-5
+----------------------------------------------------------------------
+[19:56:34] [CYC2] >>  Executing step 2...
+[19:56:34] [CYC2] 🤖  LLM model slot: claude-haiku-3-5
+[19:56:34] [CYC2] 💻  Code preview: import platform; print('OS:', platform.uname().system, platform.uname().release)
+[19:56:34] [CYC2] <<  Done in 0.02s — SUCCESS (rc=0)
+[19:56:34] [CYC2]     OS: Linux 6.17.0-1010-azure
+
+======================================================================
+  Cycle 3/4  |  Model slot: gpt-4o-mini
+----------------------------------------------------------------------
+[19:56:34] [CYC3] >>  Executing step 3...
+[19:56:34] [CYC3] 🤖  LLM model slot: gpt-4o-mini
+[19:56:34] [CYC3] 💻  Code preview: import datetime; print('Time:', datetime.datetime.utcnow().isoformat())
+[19:56:34] [CYC3] <<  Done in 0.01s — SUCCESS (rc=0)
+[19:56:34] [CYC3]     Time: 2026-04-12T19:56:34.887158
+[19:56:34] [CYC3]     
+[19:56:34] [CYC3]     [STDERR]
+[19:56:34] [CYC3]     <string>:1: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+
+======================================================================
+  Cycle 4/4  |  Model slot: claude-haiku-3-5
+----------------------------------------------------------------------
+[19:56:34] [CYC4] >>  Executing step 4...
+[19:56:34] [CYC4] 🤖  LLM model slot: claude-haiku-3-5
+[19:56:34] [CYC4] 💻  Code preview: print('✅ الوكيل يعمل بنجاح!')
+[19:56:34] [CYC4] <<  Done in 0.01s — SUCCESS (rc=0)
+[19:56:34] [CYC4]     ✅ الوكيل يعمل بنجاح!
+
+======================================================================
+  Uploading Result
+----------------------------------------------------------------------
+[19:56:35]        ✓  Result → outbox/ci_result_test_001_1776023794900.json
+
+======================================================================
+  Uploading Log
+----------------------------------------------------------------------
