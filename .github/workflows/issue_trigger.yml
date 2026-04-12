@@ -1,0 +1,251 @@
+# .github/workflows/issue_trigger.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Issue-Triggered CI Loop Runner V3.2
+#
+# طريقة الاستخدام:
+#   1. افتح Issue جديد في المستودع
+#   2. ضع label:  ci-task
+#   3. اكتب في body الـ Issue كود JSON بين ```json و ``` مثل:
+#
+#      ```json
+#      {
+#        "task_id": "my_task",
+#        "description": "وصف المهمة",
+#        "steps": [
+#          "print(1 + 1)",
+#          "import sys; print(sys.version)"
+#        ]
+#      }
+#      ```
+#
+# المتطلبات:
+#   Secret: GH_TOKEN  (contents: write + issues: write)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "📋 Issue → CI Loop Runner"
+
+on:
+  issues:
+    types: [opened, labeled]
+
+concurrency:
+  group: issue-ci-runner-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  issue-ci:
+    name: "Run CI from Issue #${{ github.event.issue.number }}"
+    # تشغيل فقط إذا كان label = ci-task
+    if: contains(github.event.issue.labels.*.name, 'ci-task')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "🐍 Setup Python 3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "📦 Install dependencies"
+        run: pip install requests --quiet
+
+      - name: "📝 Extract JSON from Issue body → inbox"
+        env:
+          GH_TOKEN:    ${{ secrets.GH_TOKEN }}
+          REPO_OWNER:  ${{ github.repository_owner }}
+          REPO_NAME:   ${{ github.event.repository.name }}
+          BRANCH_NAME: main
+          ISSUE_BODY:  ${{ github.event.issue.body }}
+          ISSUE_NUM:   ${{ github.event.issue.number }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, re, base64, requests, time, sys
+
+          token      = os.environ["GH_TOKEN"]
+          owner      = os.environ["REPO_OWNER"]
+          repo       = os.environ["REPO_NAME"]
+          branch     = os.environ["BRANCH_NAME"]
+          body       = os.environ.get("ISSUE_BODY", "")
+          issue_num  = os.environ.get("ISSUE_NUM", "0")
+          issue_title= os.environ.get("ISSUE_TITLE", "")
+
+          hdrs = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github+json",
+              "User-Agent": "GHA-Issue-Trigger-V32",
+          }
+
+          # ── استخراج JSON من code block ```json ... ``` ──────────────────
+          match = re.search(r"```json\s*([\s\S]*?)\s*```", body, re.IGNORECASE)
+          if not match:
+              # محاولة ثانية: JSON مباشر بدون code block
+              match = re.search(r"(\{[\s\S]*\})", body)
+
+          if not match:
+              comment = (
+                  "## ❌ لم يُعثر على JSON\n\n"
+                  "ضع المهمة في body الـ Issue داخل code block:\n\n"
+                  "````\n```json\n{\n  \"task_id\": \"my_task\",\n"
+                  "  \"description\": \"وصف\",\n"
+                  "  \"steps\": [\"print(1+1)\"]\n}\n```\n````"
+              )
+              url_c = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_num}/comments"
+              requests.post(url_c, headers=hdrs, json={"body": comment}, timeout=15)
+              print("No JSON found in issue body. Comment posted.")
+              sys.exit(0)
+
+          raw_json = match.group(1).strip()
+
+          try:
+              task = json.loads(raw_json)
+          except json.JSONDecodeError as e:
+              comment = f"## ❌ JSON غير صالح\n\n```\n{e}\n```"
+              url_c = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_num}/comments"
+              requests.post(url_c, headers=hdrs, json={"body": comment}, timeout=15)
+              print(f"Invalid JSON: {e}")
+              sys.exit(1)
+
+          # تعيين task_id من رقم الـ Issue إذا لم يكن موجودًا
+          if "task_id" not in task:
+              task["task_id"] = f"issue_{issue_num}_{int(time.time())}"
+
+          # إضافة metadata من الـ Issue
+          task["_issue_number"] = int(issue_num)
+          task["_issue_title"]  = issue_title
+          task["_source"]       = "github_issue"
+
+          # ── كتابة المهمة إلى inbox/ci_task.json ───────────────────────
+          path = "inbox/ci_task.json"
+          url  = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+          r0   = requests.get(url, headers=hdrs, timeout=15)
+          sha  = r0.json().get("sha") if r0.status_code == 200 else None
+
+          payload = {
+              "message": f"[Issue #{issue_num}] Task {task['task_id']}",
+              "content": base64.b64encode(
+                  json.dumps(task, ensure_ascii=False, indent=2).encode()
+              ).decode(),
+              "branch": branch,
+          }
+          if sha:
+              payload["sha"] = sha
+
+          r = requests.put(url, headers=hdrs, json=payload, timeout=20)
+          if r.status_code in (200, 201):
+              print(f"✓ Task written to inbox: {task['task_id']}")
+          else:
+              print(f"✗ Failed to write task: {r.status_code} {r.text[:200]}")
+              sys.exit(1)
+
+          # ── تعليق تأكيد على الـ Issue ──────────────────────────────────
+          run_url = f"https://github.com/{owner}/{repo}/actions"
+          comment = (
+              f"## ✅ المهمة مقبولة\n\n"
+              f"| الحقل | القيمة |\n|---|---|\n"
+              f"| Task ID | `{task['task_id']}` |\n"
+              f"| Steps | `{len(task.get('steps', []))}` |\n"
+              f"| الحالة | `قيد التنفيذ...` |\n\n"
+              f"🔗 [تابع التنفيذ في Actions]({run_url})"
+          )
+          url_c = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_num}/comments"
+          requests.post(url_c, headers=hdrs, json={"body": comment}, timeout=15)
+          PYEOF
+
+      - name: "🧠 Run Code Interpreter Loop"
+        env:
+          GH_TOKEN:        ${{ secrets.GH_TOKEN }}
+          REPO_OWNER:      ${{ github.repository_owner }}
+          REPO_NAME:       ${{ github.event.repository.name }}
+          BRANCH_NAME:     main
+          CI_TASK_FILE:    inbox/ci_task.json
+          RESULT_DIR:      outbox
+          LOG_DIR:         logs
+          MAX_CYCLES:      "5"
+          COMMAND_TIMEOUT: "120"
+        run: python3 scripts/ci_runner.py
+
+      - name: "💬 Post result comment on Issue"
+        if: always()
+        env:
+          GH_TOKEN:   ${{ secrets.GH_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME:  ${{ github.event.repository.name }}
+          ISSUE_NUM:  ${{ github.event.issue.number }}
+          RUN_ID:     ${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, glob, requests
+
+          token     = os.environ["GH_TOKEN"]
+          owner     = os.environ["REPO_OWNER"]
+          repo      = os.environ["REPO_NAME"]
+          issue_num = os.environ["ISSUE_NUM"]
+          run_id    = os.environ["RUN_ID"]
+          job_status= os.environ["JOB_STATUS"]
+
+          hdrs = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github+json",
+          }
+
+          icon   = "✅" if job_status == "success" else "❌"
+          run_url = f"https://github.com/{owner}/{repo}/actions/runs/{run_id}"
+
+          # قراءة آخر ملف نتيجة
+          result_summary = ""
+          results = sorted(glob.glob("outbox/ci_result_*.json"))
+          if results:
+              try:
+                  with open(results[-1]) as f:
+                      r = json.load(f)
+                  cycles = r.get("cycle_results", [])
+                  rows = "\n".join(
+                      f"| {c['cycle']} | `{c['model_slot']}` | `{c['status']}` | `{c['elapsed_s']}s` |"
+                      for c in cycles
+                  )
+                  result_summary = (
+                      f"\n\n### نتائج الدورات\n"
+                      f"| # | النموذج | الحالة | الزمن |\n|---|---|---|---|\n{rows}"
+                  )
+                  for c in cycles:
+                      out = c.get("output", "")[:500]
+                      if out:
+                          result_summary += f"\n\n**دورة {c['cycle']} — Output:**\n```\n{out}\n```"
+              except Exception:
+                  pass
+
+          comment = (
+              f"## {icon} تم الانتهاء من التنفيذ\n\n"
+              f"| الحقل | القيمة |\n|---|---|\n"
+              f"| Run ID | `{run_id}` |\n"
+              f"| الحالة | `{job_status}` |\n"
+              f"| اللوج | `logs/` في المستودع |\n\n"
+              f"🔗 [عرض تفاصيل Run]({run_url})"
+              f"{result_summary}"
+          )
+
+          url_c = f"https://api.github.com/repos/{owner}/{repo}/issues/{issue_num}/comments"
+          r = requests.post(url_c, headers=hdrs, json={"body": comment}, timeout=15)
+          print("✓ Result comment posted" if r.status_code == 201 else f"✗ {r.status_code}")
+          PYEOF
+
+      - name: "📋 Job Summary"
+        if: always()
+        run: |
+          echo "## 📋 Issue → CI Runner" >> $GITHUB_STEP_SUMMARY
+          echo "| الحقل | القيمة |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Issue | #${{ github.event.issue.number }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | \`${{ github.run_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
