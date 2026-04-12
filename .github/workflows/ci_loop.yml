@@ -1,0 +1,131 @@
+# .github/workflows/ci_loop.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Code Interpreter Loop Runner V3.1
+#
+# مزايا:
+#   ✓ Code Interpreter (Python) كمحرك افتراضي
+#   ✓ تناوب النماذج اللغوية (round-robin) لتوفير التوكنز
+#   ✓ حد أقصى 5 دورات لكل تشغيل
+#   ✓ ملف لوج .txt يُرفع تلقائيًا إلى logs/ في المستودع
+#
+# طرق التشغيل:
+#   1. يدويًا من GitHub UI أو API  (workflow_dispatch)
+#   2. تلقائيًا بـ push على inbox/ci_task.json
+#
+# المتطلبات:
+#   Secret: GH_TOKEN  (contents: write)
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "🧠 CI Loop Runner"
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_json:
+        description: |
+          JSON للمهمة — مثال:
+          {"task_id":"t1","description":"اختبار","steps":["print(1+1)","import sys; print(sys.version)"]}
+        required: false
+        default: ""
+      max_cycles:
+        description: "أقصى عدد دورات (1-5)"
+        required: false
+        default: "5"
+
+  push:
+    branches: [main]
+    paths:
+      - "inbox/ci_task.json"
+
+concurrency:
+  group: ci-loop-runner
+  cancel-in-progress: false
+
+jobs:
+  ci-loop:
+    name: "Code Interpreter Loop"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: "📥 Checkout"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "🐍 Setup Python 3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "📦 Install dependencies"
+        run: pip install requests --quiet
+
+      - name: "📝 Write task to inbox (manual trigger)"
+        if: ${{ github.event.inputs.task_json != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME:  ${{ github.event.repository.name }}
+          BRANCH_NAME: main
+          TASK_JSON:  ${{ github.event.inputs.task_json }}
+        run: |
+          python3 - <<'EOF'
+          import os, json, base64, requests, time
+          token  = os.environ["GH_TOKEN"]
+          owner  = os.environ["REPO_OWNER"]
+          repo   = os.environ["REPO_NAME"]
+          branch = os.environ["BRANCH_NAME"]
+          raw    = os.environ.get("TASK_JSON", "").strip()
+          if not raw:
+              raise SystemExit(0)
+          try:
+              task = json.loads(raw)
+          except Exception as e:
+              print(f"Invalid JSON: {e}"); raise SystemExit(1)
+          if "task_id" not in task:
+              task["task_id"] = f"ci_{int(time.time())}"
+          path = "inbox/ci_task.json"
+          url  = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+          hdrs = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
+          r0   = requests.get(url, headers=hdrs, timeout=15)
+          sha  = r0.json().get("sha") if r0.status_code == 200 else None
+          payload = {
+              "message": f"[CI] Manual task {task['task_id']}",
+              "content": base64.b64encode(json.dumps(task, ensure_ascii=False, indent=2).encode()).decode(),
+              "branch":  branch,
+          }
+          if sha: payload["sha"] = sha
+          r = requests.put(url, headers=hdrs, json=payload, timeout=20)
+          print("✓ Task written" if r.status_code in (200,201) else f"✗ {r.status_code}: {r.text[:200]}")
+          if r.status_code not in (200,201): raise SystemExit(1)
+          EOF
+
+      - name: "🧠 Run Code Interpreter Loop"
+        env:
+          GH_TOKEN:        ${{ secrets.GH_TOKEN }}
+          REPO_OWNER:      ${{ github.repository_owner }}
+          REPO_NAME:       ${{ github.event.repository.name }}
+          BRANCH_NAME:     main
+          CI_TASK_FILE:    inbox/ci_task.json
+          RESULT_DIR:      outbox
+          LOG_DIR:         logs
+          MAX_CYCLES:      ${{ github.event.inputs.max_cycles || '5' }}
+          COMMAND_TIMEOUT: "120"
+        run: python3 scripts/ci_runner.py
+
+      - name: "📋 Job Summary"
+        if: always()
+        run: |
+          echo "## 🧠 CI Loop Runner Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| الحقل | القيمة |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | \`${{ github.run_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Max Cycles | \`${{ github.event.inputs.max_cycles || '5' }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
+          echo "| Logs | \`logs/\` folder in repo |" >> $GITHUB_STEP_SUMMARY
