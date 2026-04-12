@@ -1,1 +1,13 @@
-waiting
+{
+  "task_id": "test_001",
+  "description": "اختبار أول للوكيل على GitHub Actions",
+  "steps": [
+    "import sys; print('Python:', sys.version)",
+    "import platform; print('OS:', platform.uname().system, platform.uname().release)",
+    "import datetime; print('Time:', datetime.datetime.utcnow().isoformat())",
+    "print('✅ الوكيل يعمل بنجاح!')"
+  ],
+  "_issue_number": 2,
+  "_issue_title": "🧪 اختبار تشغيل الوكيل",
+  "_source": "github_issue"
+}
