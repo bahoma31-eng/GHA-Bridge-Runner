@@ -1,1 +1,8 @@
-waiting
+{
+  "task_id": "test_01",
+  "description": "اختبار أولي",
+  "steps": [
+    "print(1 + 1)",
+    "import sys; print(sys.version)"
+  ]
+}
