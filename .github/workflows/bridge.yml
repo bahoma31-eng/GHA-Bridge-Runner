@@ -1,0 +1,138 @@
+# .github/workflows/bridge.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# Cloud Bridge Runner V3.0 — GitHub Actions Native
+#
+# يُشغَّل بثلاث طرق:
+#   1. يدويًا عبر GitHub UI / API  (workflow_dispatch)
+#   2. تلقائيًا عند push على inbox/local_task.json
+#   3. جدوليًا كل 15 دقيقة (schedule) — قابل للتعطيل بالتعليق
+#
+# المتطلبات (Secrets):
+#   GH_TOKEN — Personal Access Token بصلاحيات: contents:write
+#              أضفه في: Settings > Secrets and Variables > Actions
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: "🌉 Bridge Runner"
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_json:
+        description: "JSON للمهمة (اختياري — يُكتب في inbox تلقائيًا)"
+        required: false
+        default: ""
+      engine:
+        description: "المحرك المختصر (إذا كتبت task_json)"
+        required: false
+        default: "BASH"
+
+  push:
+    branches: [main]
+    paths:
+      - "inbox/local_task.json"
+
+  # schedule:
+  #   - cron: "*/15 * * * *"
+
+concurrency:
+  group: bridge-runner
+  cancel-in-progress: false
+
+jobs:
+  run-bridge:
+    name: "Execute Bridge Task"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: "📥 Checkout repository"
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: "🐍 Setup Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "📦 Install dependencies"
+        run: pip install requests --quiet
+
+      - name: "📝 Write task to inbox (if provided manually)"
+        if: ${{ github.event.inputs.task_json != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          BRANCH_NAME: main
+          TASK_JSON: ${{ github.event.inputs.task_json }}
+        run: |
+          python3 - <<'PYEOF'
+          import os, json, base64, requests, time
+
+          token  = os.environ["GH_TOKEN"]
+          owner  = os.environ["REPO_OWNER"]
+          repo   = os.environ["REPO_NAME"]
+          branch = os.environ["BRANCH_NAME"]
+          raw    = os.environ.get("TASK_JSON", "").strip()
+
+          if not raw:
+              print("No task JSON provided, skipping.")
+              raise SystemExit(0)
+
+          try:
+              task = json.loads(raw)
+          except json.JSONDecodeError as e:
+              print(f"Invalid JSON: {e}")
+              raise SystemExit(1)
+
+          if "task_id" not in task:
+              task["task_id"] = f"manual_{int(time.time())}"
+
+          url = f"https://api.github.com/repos/{owner}/{repo}/contents/inbox/local_task.json"
+          headers = {
+              "Authorization": f"token {token}",
+              "Accept": "application/vnd.github+json",
+          }
+
+          r = requests.get(url, headers=headers, timeout=15)
+          sha = r.json().get("sha") if r.status_code == 200 else None
+
+          content = base64.b64encode(json.dumps(task, ensure_ascii=False, indent=2).encode()).decode()
+          payload = {"message": f"[Bridge] Manual task {task['task_id']}", "content": content, "branch": branch}
+          if sha:
+              payload["sha"] = sha
+
+          r2 = requests.put(url, headers=headers, json=payload, timeout=20)
+          if r2.status_code in (200, 201):
+              print(f"✓ Task written to inbox: {task['task_id']}")
+          else:
+              print(f"✗ Failed: {r2.status_code} {r2.text[:200]}")
+              raise SystemExit(1)
+          PYEOF
+
+      - name: "🌉 Run Bridge"
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          BRANCH_NAME: main
+          TASK_FILE: inbox/local_task.json
+          RESULT_DIR: outbox
+          COMMAND_TIMEOUT: "300"
+        run: python3 scripts/bridge_runner.py
+
+      - name: "📋 Write Job Summary"
+        if: always()
+        run: |
+          echo "## 🌉 Bridge Runner Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | \`${{ github.run_id }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Trigger | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Timestamp | $(date -u '+%Y-%m-%d %H:%M:%S UTC') |" >> $GITHUB_STEP_SUMMARY
